@@ -2,7 +2,7 @@ import asyncio, json, os, time, socket, signal
 import websockets
 
 # ===== Config =====
-ESP32_HOST = os.getenv("ESP32_HOST", "192.168.1.50")  # set to your ESP32 IP
+ESP32_HOST = os.getenv("ESP32_HOST", "192.168.1.84")  # set to your ESP32 IP
 ESP32_PORT = int(os.getenv("ESP32_PORT", "5005"))
 WS_BIND    = os.getenv("WS_BIND", "0.0.0.0")
 WS_PORT    = int(os.getenv("WS_PORT", "8443"))  # behind TLS terminator or use ws for quick test
@@ -19,10 +19,12 @@ last_pkt_ms = 0
 current_driver = None  # websocket object that currently holds control
 clients = set()
 
-NEUTRAL = {"ax": 0.0, "ay": 0.0}
+# Neutral payload (explicit ch1..ch8) — sketch expects ch1..ch8 or will default missing keys to 0.0
+NEUTRAL = {f"ch{i}": 0.0 for i in range(1, 9)}
 
 def send_udp(payload: dict):
     data = json.dumps(payload).encode("utf-8")
+    print(f"UDP -> {ESP32_HOST}:{ESP32_PORT} : {data}")
     udp_sock.sendto(data, (ESP32_HOST, ESP32_PORT))
 
 async def watchdog():
@@ -58,12 +60,31 @@ async def handle_client(ws):
 
             # Only the driver can command the car
             if current_driver is ws:
-                ax = float(pkt.get("ax", 0.0))
-                ay = float(pkt.get("ay", 0.0))
-                ax = max(-1.0, min(1.0, ax))
-                ay = max(-1.0, min(1.0, ay))
-                send_udp({"ax": ax, "ay": ay})
-                last_pkt_ms = int(time.monotonic() * 1000)
+                # Support both legacy {ax,ay} packets and new ch1..ch8 channel packets.
+                def clamp(v, lo=-1.0, hi=1.0):
+                    try:
+                        fv = float(v)
+                    except Exception:
+                        return 0.0
+                    return max(lo, min(hi, fv))
+
+                # If client sends channel-format data, forward those channels.
+                if any(k in pkt for k in ("ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8")):
+                    out = {}
+                    for i in range(1, 9):
+                        key = f"ch{i}"
+                        if key in pkt:
+                            out[key] = clamp(pkt.get(key, 0.0))
+                        else:
+                            out[key] = 0.0
+                    send_udp(out)
+                    last_pkt_ms = int(time.monotonic() * 1000)
+                # Legacy: map ax/ay to ch1/ch2 for compatibility
+                elif "ax" in pkt or "ay" in pkt:
+                    ax = clamp(pkt.get("ax", 0.0))
+                    ay = clamp(pkt.get("ay", 0.0))
+                    send_udp({"ch1": ax, "ch2": ay})
+                    last_pkt_ms = int(time.monotonic() * 1000)
             else:
                 # spectator can send "acquire": True to request control (optional)
                 if pkt.get("acquire"):

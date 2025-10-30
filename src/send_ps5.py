@@ -11,6 +11,10 @@ if pygame.joystick.get_count() == 0:
 joy = pygame.joystick.Joystick(0)
 joy.init()
 print("Joystick:", joy.get_name())
+print("axis:", joy.get_numaxes())
+print("balls:", joy.get_numballs())
+print("hats:", joy.get_numhats())
+print("buttons:", joy.get_numbuttons())
 
 def read_state():
     pygame.event.pump()
@@ -21,8 +25,9 @@ def read_state():
     bx = joy.get_axis(3)  # right stick X
     by = -joy.get_axis(4)  # right stick Y (invert)
     rg = joy.get_axis(5)   # right trigger
-    buttons = { "cross": joy.get_button(0) , "square": joy.get_button(3), "round": joy.get_button(1), "triangle": joy.get_button(2) }
-    print(f"AX: {ax:.3f} AY: {ay:.3f} LG: {lg:.3f} BX: {bx:.3f} BY: {by:.3f} RG: {rg:.3f} CROSS: {buttons['cross']} SQUARE: {buttons['square']} ROUND: {buttons['round']} TRIANGLE: {buttons['triangle']}")
+
+    buttons = { "cross": joy.get_button(0) , "square": joy.get_button(3), "round": joy.get_button(1), "triangle": joy.get_button(2), "lb": joy.get_button(4), "rb": joy.get_button(5), "left_stick": joy.get_button(11), "right_stick": joy.get_button(12), "flash": joy.get_button(8), "menu": joy.get_button(9) }
+    print(f"AX: {ax:.3f} AY: {ay:.3f} LG: {lg:.3f} BX: {bx:.3f} BY: {by:.3f} RG: {rg:.3f} CROSS: {buttons['cross']} SQUARE: {buttons['square']} ROUND: {buttons['round']} TRIANGLE: {buttons['triangle']} LB: {buttons['lb']} RB: {buttons['rb']} LEFT: {buttons['left_stick']} RIGHT: {buttons['right_stick']} FLASH: {buttons['flash']} MENU: {buttons['menu']}")
     return {"ax": round(ax,3), "ay": round(ay,3), "lg": round(lg,3), "bx": round(bx,3), "by": round(by,3), "rg": round(rg,3), "buttons": buttons, "ts": time.time()}
 
 try:
