@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>RC Car Control Dashboard</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        :root {
+            --bg: #0b0d10;
+            --card: #12161b;
+            --text: #e8eef5;
+            --muted: #98a3ad;
+            --ok: #36d399;
+            --warn: #fbbf24;
+            --bad: #f87272;
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font: 14px/1.4 system-ui, Segoe UI, Roboto, Helvetica, Arial
+        }
+
+        header {
+            padding: 14px 18px;
+            border-bottom: 1px solid #1f2630;
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            flex-wrap: wrap
+        }
+
+        .pill {
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #1a212b;
+            color: var(--muted)
+        }
+
+        .pill.ok {
+            color: var(--ok)
+        }
+
+        .pill.bad {
+            color: var(--bad)
+        }
+
+        .pill.warn {
+            color: var(--warn)
+        }
+
+        .grid {
+            display: grid;
+            gap: 14px;
+            padding: 14px
+        }
+
+        @media(min-width:1100px) {
+            .grid {
+                grid-template-columns: 2fr 1fr
+            }
+        }
+
+        .videos {
+            display: grid;
+            gap: 14px
+        }
+
+        @media(min-width:1100px) {
+            .videos {
+                grid-template-columns: repeat(2, 1fr)
+            }
+        }
+
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
+            overflow: hidden;
+            border: 1px solid #1b2028
+        }
+
+        .card h3 {
+            margin: 0;
+            padding: 10px 12px;
+            border-bottom: 1px solid #1b2028;
+            color: #cfd7df
+        }
+
+        .player {
+            aspect-ratio: 16/9;
+            width: 100%;
+            display: block;
+            border: 0;
+            background: #000
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 10px 12px
+        }
+
+        .kv {
+            min-width: 120px
+        }
+
+        .kv b {
+            display: block;
+            color: #cfd7df
+        }
+
+        .log {
+            padding: 10px 12px;
+            max-height: 280px;
+            overflow: auto;
+            font-family: ui-monospace, Consolas, monospace;
+            background: #0e1217
+        }
+
+        .small {
+            font-size: 12px;
+            color: var(--muted)
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #1c2430;
+            margin-left: 6px
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div style="font-weight:600">RC Car — Video & Telemetry</div>
+        <div id="wsStatus" class="pill">WebSocket: connecting…</div>
+        <div class="pill">Server: <span id="serverIp">100.95.67.37</span></div>
+    </header>
+
+    <div class="grid">
+        <section class="videos">
+            <!-- MediaMTX WebRTC players embedded via per-path pages (simple & robust) -->
+            <div class="card">
+                <h3>Front Cam (cam0)</h3>
+                <iframe class="player" src="http://100.95.67.37:8889/cam0"
+                    allow="autoplay; camera; microphone"></iframe>
+            </div>
+            <div class="card">
+                <h3>Side Cam (cam1)</h3>
+                <iframe class="player" src="http://100.95.67.37:8889/cam1"
+                    allow="autoplay; camera; microphone"></iframe>
+            </div>
+            <div class="card">
+                <h3>Rear Cam (cam2)</h3>
+                <iframe class="player" src="http://100.95.67.37:8889/cam2"
+                    allow="autoplay; camera; microphone"></iframe>
+            </div>
+            <div class="card">
+                <h3>ESP32-CAM (later)</h3>
+                <!-- For an ESP32-CAM MJPEG stream, replace with its URL, e.g.: -->
+                <!-- <img class="player" src="http://192.168.x.y:81/stream" /> -->
+                <div class="player" style="display:grid;place-items:center;color:#7c8793">Coming soon…</div>
+            </div>
+        </section>
+
+        <section class="card">
+            <h3>Controls & Telemetry</h3>
+            <div class="row">
+                <div class="kv"><b>Steering</b><span id="steer">0.00</span></div>
+                <div class="kv"><b>Throttle</b><span id="throttle">0.00</span></div>
+                <div class="kv"><b>Winch</b><span id="winch">0.00</span></div>
+                <div class="kv"><b>Dig</b><span id="dig">N/A</span></div>
+                <div class="kv"><b>Swaybar</b><span id="swaybar">N/A</span></div>
+                <div class="kv"><b>Gear</b><span id="gear">N/A</span></div>
+                <div class="kv"><b>Lights</b><span id="lights">N/A</span></div>
+                <div class="kv"><b>Last packet</b><span id="lastTs" class="small">—</span></div>
+            </div>
+            <div class="row small">Any control packet received from the relay will appear here and in the log below.
+            </div>
+            <div class="log" id="log"></div>
+        </section>
+    </div>
+
+    <script>
+        // --- CONFIG: set your relay WebSocket URL (Tailscale IP is fine) ---
+        const WS_URL = "ws://100.95.67.37:8443";  // your relay.py server
+        // -------------------------------------------------------------------
+
+        const wsStatus = document.getElementById('wsStatus');
+        const steerEl = document.getElementById('steer');
+        const throttleEl = document.getElementById('throttle');
+        const winchEl = document.getElementById('winch');
+        const digEl = document.getElementById('dig');
+        const swaybarEl = document.getElementById('swaybar');
+        const gearEl = document.getElementById('gear');
+        const lightsEl = document.getElementById('lights');
+        const lastTsEl = document.getElementById('lastTs');
+        const logEl = document.getElementById('log');
+
+        function setWs(status, cls = "") {
+            wsStatus.textContent = "WebSocket: " + status;
+            wsStatus.className = "pill " + cls;
+        }
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            const line = `[${time}] ${msg}\n`;
+            logEl.textContent = (line + logEl.textContent).slice(0, 8000);
+        }
+
+        function connect() {
+            setWs("connecting…");
+            const ws = new WebSocket(WS_URL);
+            ws.onopen = () => { setWs("connected", "ok"); ws.send(JSON.stringify({ type: "hello", role: "dashboard" })); };
+            ws.onclose = () => { setWs("disconnected", "bad"); setTimeout(connect, 1500); };
+            ws.onerror = () => { setWs("error", "bad"); };
+
+            ws.onmessage = (ev) => {
+                try {
+                    const msg = JSON.parse(ev.data);
+                    if (msg.type === "hello" || msg.type === "role") {
+                        log(`server: ${ev.data}`);
+                        return;
+                    }
+                    // Expecting broadcasted control packets, e.g. {ax, ay, gear, lights, ts}
+                    if (typeof msg.steering !== "undefined" || typeof msg.ay !== "undefined") {
+                        const steering = Number(msg.steering ?? 0).toFixed(2);
+                        const throttle = Number(msg.throttle ?? 0).toFixed(2);
+                        steerEl.textContent = steering;
+                        throttleEl.textContent = throttle;
+                        if (msg.gear !== undefined) gearEl.textContent = String(msg.gear).toUpperCase();
+                        if (msg.lights !== undefined) lightsEl.textContent = String(msg.lights).toUpperCase();
+                        if (msg.winch !== undefined) winchEl.textContent = Number(msg.winch ?? 0).toFixed(2);
+                        if (msg.dig !== undefined) digEl.textContent = String(msg.dig).toUpperCase();
+                        if (msg.swaybar !== undefined) swaybarEl.textContent = String(msg.swaybar).toUpperCase();
+                        if (msg.ts) lastTsEl.textContent = new Date(msg.ts * 1000).toLocaleTimeString();
+                        log(`ctrl steering=${steering} throttle=${throttle} gear=${msg.gear ?? "?"} lights=${msg.lights ? "ON" : "OFF"}`);
+                    } else if (msg.event) {
+                        // generic events
+                        log(`event: ${msg.event}`);
+                    }
+                } catch (e) { /* ignore */ }
+            };
+        }
+        connect();
+    </script>
+</body>
+
+</html>

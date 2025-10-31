@@ -6,7 +6,7 @@ ESP32_HOST = os.getenv("ESP32_HOST", "192.168.1.84")  # set to your ESP32 IP
 ESP32_PORT = int(os.getenv("ESP32_PORT", "5005"))
 WS_BIND    = os.getenv("WS_BIND", "0.0.0.0")
 WS_PORT    = int(os.getenv("WS_PORT", "8443"))  # behind TLS terminator or use ws for quick test
-SHARED_TOKEN = os.getenv("TOKEN", "change-me")
+SHARED_TOKEN = os.getenv("TOKEN", "my-super-secret")
 
 # Failsafe
 FAILSAFE_MS = 500
@@ -18,6 +18,8 @@ last_pkt_ms = 0
 # Control arbitration
 current_driver = None  # websocket object that currently holds control
 clients = set()
+# --- add near top with other globals ---
+dashboards = set()  # a set of ws clients interested in telemetry
 
 # Neutral payload (explicit ch1..ch8) — sketch expects ch1..ch8 or will default missing keys to 0.0
 NEUTRAL = {f"ch{i}": 0.0 for i in range(1, 9)}
@@ -37,15 +39,20 @@ async def watchdog():
 async def handle_client(ws):
     global current_driver, last_pkt_ms
     clients.add(ws)
-    try:
-        # Simple control lock: first client becomes driver; can be improved with explicit "acquire/release"
-        if current_driver is None:
-            current_driver = ws
+    role = "spectator"
+    await ws.send(json.dumps({"type": "hello", "role": role}))
 
-        await ws.send(json.dumps({
-            "type": "hello",
-            "role": "driver" if current_driver is ws else "spectator",
-        }))
+    try:
+        # # Simple control lock: first client becomes driver; can be improved with explicit "acquire/release"
+        # role = "spectator"
+        # if current_driver is None:
+        #     current_driver = ws
+        #     role = "driver"
+
+        # await ws.send(json.dumps({
+        #     "type": "hello",
+        #     "role": role,
+        # }))
 
         async for msg in ws:
             # Each message should be a JSON control packet
@@ -54,8 +61,25 @@ async def handle_client(ws):
             except Exception:
                 continue
 
+            # allow dashboards to register
+            if pkt.get("type") == "hello" and pkt.get("role") == "dashboard":
+                dashboards.add(ws)
+                role = "dashboard"
+                await ws.send(json.dumps({"type": "role", "role": "dashboard"}))
+                continue
+
             if pkt.get("token") != SHARED_TOKEN:
                 # optional: close or ignore
+                continue
+
+            if pkt.get("acquire") is True:
+                if current_driver is None:
+                    current_driver = ws
+                    role = "driver"
+                    await ws.send(json.dumps({"type":"role","role":"driver"}))
+                else:
+                    # optional: inform client someone else is driving
+                    await ws.send(json.dumps({"type":"busy","by":"driver"}))
                 continue
 
             # Only the driver can command the car
@@ -79,6 +103,24 @@ async def handle_client(ws):
                             out[key] = 0.0
                     send_udp(out)
                     last_pkt_ms = int(time.monotonic() * 1000)
+
+                    # broadcast telemetry to dashboards
+                    telem = {
+                        "steering": pkt["ch1"],
+                        "throttle": pkt["ch2"],
+                        "winch": pkt["ch3"],
+                        "lights": "on" if pkt["ch5"] > 0 else "off",
+                        "gear": "high" if pkt["ch7"] < 0 else "low",
+                        "dig": "locked rear" if pkt["ch8"] < 0 else ("2wd" if pkt["ch8"] == 0 else "4wd"),
+                        "swaybar": "deactivated" if pkt["ch4"] > 0 else "activated",
+                        "ts": pkt.get("ts", time.time())
+                    }
+                    # copy to avoid set changed during iteration
+                    for d in list(dashboards):
+                        try:
+                            await d.send(json.dumps(telem))
+                        except Exception:
+                            dashboards.discard(d)
                 # Legacy: map ax/ay to ch1/ch2 for compatibility
                 elif "ax" in pkt or "ay" in pkt:
                     ax = clamp(pkt.get("ax", 0.0))
@@ -94,9 +136,12 @@ async def handle_client(ws):
     except websockets.ConnectionClosed:
         pass
     finally:
+        clients.discard(ws)
+
+        if ws in dashboards:
+            dashboards.discard(ws)
         if current_driver is ws:
             current_driver = None
-        clients.discard(ws)
 
 async def main():
     # watchdog

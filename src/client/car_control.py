@@ -28,7 +28,7 @@ class RGT_control(CarControl):
 
         changed_buttons = buttons_updated(self.last_buttons, buttons)
 
-        self.winch = by
+        self.winch = by if buttons.get("lb",0) == 1 else 0
         self.lights = - self.lights if "triangle" in changed_buttons else self.lights
         self.rotating_lights = - self.rotating_lights if "square" in changed_buttons else self.rotating_lights
         self.speed = -self.speed if "rb" in changed_buttons else self.speed
