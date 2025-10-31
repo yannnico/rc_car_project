@@ -4,7 +4,7 @@ import pygame, asyncio, websockets, json, time, os, ssl
 from car_control import RGT_control
 import sys
 
-WS_URL = os.getenv("WS_URL", "ws://0.0.0.0:8443")
+WS_URL = os.getenv("WS_URL", "ws://100.95.67.37:8443")
 TOKEN  = os.getenv("TOKEN", "my-super-secret")
 
 SEND_HZ = 40
@@ -24,9 +24,9 @@ def read_state():
         try:
             ax = joy.get_axis(0)   # left stick X
             ay = -joy.get_axis(1)  # left stick Y (invert)
-            bx = joy.get_axis(4)   # right stick X
-            by = -joy.get_axis(2)  # right stick Y (invert)
-            lg = joy.get_axis(3)   # left trigger
+            bx = joy.get_axis(2)   # right stick X
+            by = -joy.get_axis(3)  # right stick Y (invert)
+            lg = joy.get_axis(4)   # left trigger
             rg = joy.get_axis(5)   # right trigger
 
             buttons = { "cross": joy.get_button(0) , "square": joy.get_button(2), "round": joy.get_button(1), "triangle": joy.get_button(3), "lb": joy.get_button(9), "rb": joy.get_button(10), "left_stick": joy.get_button(7), "right_stick": joy.get_button(8), "flash": joy.get_button(4), "menu": joy.get_button(6) }
