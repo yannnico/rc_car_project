@@ -24,7 +24,7 @@ NEUTRAL = {f"ch{i}": 0.0 for i in range(1, 9)}
 
 def send_udp(payload: dict):
     data = json.dumps(payload).encode("utf-8")
-    print(f"UDP -> {ESP32_HOST}:{ESP32_PORT} : {data}")
+    print(f"UDP -> {ESP32_HOST}:{ESP32_PORT} : {data}", end="\r")
     udp_sock.sendto(data, (ESP32_HOST, ESP32_PORT))
 
 async def watchdog():
