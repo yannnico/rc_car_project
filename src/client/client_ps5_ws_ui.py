@@ -2,7 +2,7 @@
 Client with simple UI: shows control status and three video streams served by MediaMTX.
 
 Dependencies (install if missing):
-  pip install opencv-python pillow
+  pip install python-vlc pillow
 
 Usage:
   WS_URL=ws://localhost:8443 TOKEN=my-token \
@@ -13,13 +13,14 @@ Usage:
 
 This script runs a Tkinter UI (main thread) and an asyncio websocket sender in a background thread.
 It reads the local controller via pygame and sends `ch1..ch8` JSON (same format as `client_ps5_ws.py`).
+Video is rendered via python-vlc embedded into Tk labels.
 """
 import os
+import sys
 import time
 import threading
 import asyncio
 import json
-import queue
 
 try:
     import tkinter as tk
@@ -28,12 +29,15 @@ except Exception:
     raise SystemExit("Tkinter is required (usually included with Python).")
 
 try:
-    import cv2
     from PIL import Image, ImageTk
 except Exception:
-    cv2 = None
     Image = None
     ImageTk = None
+
+try:
+    import vlc
+except Exception:
+    vlc = None
 
 import pygame
 import websockets
@@ -41,9 +45,13 @@ import websockets
 WS_URL = os.getenv("WS_URL", "ws://0.0.0.0:8443")
 TOKEN = os.getenv("TOKEN", "my-super-secret")
 
-STREAM1 = os.getenv("STREAM1", "rtsp://127.0.0.1:8554/stream1")
-STREAM2 = os.getenv("STREAM2", "rtsp://127.0.0.1:8554/stream2")
-STREAM3 = os.getenv("STREAM3", "rtsp://127.0.0.1:8554/stream3")
+STREAM1 = os.getenv("STREAM1", "rtsp://192.168.1.55:8554/cam0")
+STREAM2 = os.getenv("STREAM2", "rtsp://192.168.1.55:8554/cam1")
+STREAM3 = os.getenv("STREAM3", "rtsp://192.168.1.55:8554/cam2")
+# Optional: force RTSP transport to TCP (helps avoid decoding errors)
+STREAM_TRANSPORT = os.getenv("STREAM_TRANSPORT", "")  # set to 'tcp' to prefer TCP
+# Option to disable video (useful when VLC/python-vlc is problematic)
+DISABLE_VIDEO = os.getenv("NO_VIDEO", "0") in ("1", "true", "True")
 
 FPS = 30
 
@@ -81,30 +89,68 @@ class SharedControls:
             }
 
 
-class VideoThread(threading.Thread):
-    def __init__(self, url, frame_queue, name="video"):
+class VideoVLC(threading.Thread):
+    """Embed VLC player into a Tk widget (label)."""
+
+    def __init__(self, url, tk_widget):
         super().__init__(daemon=True)
         self.url = url
-        self.frame_queue = frame_queue
+        self.widget = tk_widget
         self._stop = threading.Event()
+        self.instance = None
+        self.player = None
 
     def run(self):
-        if cv2 is None:
+        if vlc is None:
+            print("python-vlc is not installed; video disabled")
             return
-        cap = cv2.VideoCapture(self.url)
-        if not cap.isOpened():
-            print(f"Video: unable to open {self.url}")
+
+        options = []
+        if STREAM_TRANSPORT == "tcp" and self.url.startswith("rtsp://"):
+            options.append(":rtsp-tcp")
+
+        try:
+            self.instance = vlc.Instance()
+            media = self.instance.media_new(self.url)
+            for opt in options:
+                media.add_option(opt)
+            self.player = self.instance.media_player_new()
+            self.player.set_media(media)
+
+            # Attach to widget
+            wid = self.widget.winfo_id()
+            if sys.platform.startswith("linux"):
+                try:
+                    self.player.set_xwindow(wid)
+                except Exception:
+                    try:
+                        self.player.set_hwnd(wid)
+                    except Exception:
+                        pass
+            elif sys.platform == "win32":
+                try:
+                    self.player.set_hwnd(wid)
+                except Exception:
+                    pass
+            elif sys.platform == "darwin":
+                try:
+                    self.player.set_nsobject(wid)
+                except Exception:
+                    pass
+
+            self.player.play()
+        except Exception as e:
+            print("VLC playback error:", e)
             return
-        while not self._stop.is_set():
-            ret, frame = cap.read()
-            if not ret:
+
+        try:
+            while not self._stop.is_set():
                 time.sleep(0.1)
-                continue
-            # convert BGR -> RGB
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self.frame_queue.put(frame)
-            time.sleep(1.0 / FPS)
-        cap.release()
+        finally:
+            try:
+                self.player.stop()
+            except Exception:
+                pass
 
     def stop(self):
         self._stop.set()
@@ -147,7 +193,6 @@ class WebsocketSender(threading.Thread):
                     try:
                         await ws.send(json.dumps(pkt))
                     except Exception:
-                        # connection closed or error; try to reconnect
                         break
                     await asyncio.sleep(1 / 40)
         except Exception as e:
@@ -178,16 +223,24 @@ def start_pygame_reader(controls: SharedControls, stop_event: threading.Event):
             "triangle": joy.get_button(2),
             "square": joy.get_button(3),
         }
-        # Map to controls (same logic as client_ps5_ws.py -> RGT_control)
-        controls.update(steering=ax, throttle=ay, winch=by, swaybar=bx, lights=(lg + 1.0) / 2.0, rotating_lights=(rg + 1.0) / 2.0, speed=0.0, dig=1.0 if buttons["cross"] else 0.0, buttons=buttons)
+        controls.update(
+            steering=ax,
+            throttle=ay,
+            winch=by,
+            swaybar=bx,
+            lights=(lg + 1.0) / 2.0,
+            rotating_lights=(rg + 1.0) / 2.0,
+            speed=0.0,
+            dig=1.0 if buttons["cross"] else 0.0,
+            buttons=buttons,
+        )
         time.sleep(1 / 60)
 
 
-def make_ui(controls: SharedControls, frame_queues, stop_event: threading.Event):
+def make_ui(controls: SharedControls, stop_event: threading.Event):
     root = tk.Tk()
     root.title("RC Client UI")
 
-    # Video frames
     vids_frame = ttk.Frame(root)
     vids_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
@@ -197,7 +250,6 @@ def make_ui(controls: SharedControls, frame_queues, stop_event: threading.Event)
         lbl.grid(row=0, column=i, padx=4, pady=4)
         labels.append(lbl)
 
-    # Status frame
     status = ttk.Frame(root)
     status.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -210,18 +262,6 @@ def make_ui(controls: SharedControls, frame_queues, stop_event: threading.Event)
         status_text.set(
             f"steer:{snap['steering']:.2f} thr:{snap['throttle']:.2f} winch:{snap['winch']:.2f} dig:{snap['dig']:.2f} lights:{snap['lights']:.2f}"
         )
-        # update video frames if available
-        for i, q in enumerate(frame_queues):
-            try:
-                frame = q.get_nowait()
-            except queue.Empty:
-                frame = None
-            if frame is not None and Image is not None:
-                im = Image.fromarray(frame)
-                im = im.resize((320, 240))
-                imgtk = ImageTk.PhotoImage(image=im)
-                labels[i].imgtk = imgtk
-                labels[i].configure(image=imgtk)
         if stop_event.is_set():
             root.quit()
             return
@@ -229,22 +269,28 @@ def make_ui(controls: SharedControls, frame_queues, stop_event: threading.Event)
 
     root.protocol("WM_DELETE_WINDOW", lambda: stop_event.set())
     root.after(50, update_ui)
-    return root
+    return root, labels
 
 
 def main():
     controls = SharedControls()
     stop_event = threading.Event()
 
-    # frame queues for each stream
-    frame_queues = [queue.Queue(maxsize=2) for _ in range(3)]
+    # start UI (main thread) first so we can attach VLC players to widget IDs
+    root, labels = make_ui(controls, stop_event)
 
-    # start video threads
+    # start video threads (VLC) after UI created
     video_threads = []
-    for url, q in zip((STREAM1, STREAM2, STREAM3), frame_queues):
-        vt = VideoThread(url, q)
-        vt.start()
-        video_threads.append(vt)
+    if not DISABLE_VIDEO and vlc is not None:
+        for url, lbl in zip((STREAM1, STREAM2, STREAM3), labels):
+            vt = VideoVLC(url, lbl)
+            vt.start()
+            video_threads.append(vt)
+    else:
+        if DISABLE_VIDEO:
+            print("Video disabled by NO_VIDEO environment variable")
+        else:
+            print("python-vlc not available; video disabled")
 
     # start pygame reader thread
     py_thread = threading.Thread(target=start_pygame_reader, args=(controls, stop_event), daemon=True)
@@ -254,8 +300,6 @@ def main():
     ws_sender = WebsocketSender(controls, stop_event)
     ws_sender.start()
 
-    # start UI (must be main thread)
-    root = make_ui(controls, frame_queues, stop_event)
     try:
         root.mainloop()
     finally:
