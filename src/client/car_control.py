@@ -53,7 +53,7 @@ class RGT_control(CarControl):
 
     def get_control(self):
         return {
-            "steering": self.steering,
+            "steering": self.steering - 0.13,
             "throttle": self.throttle,
             "winch": self.winch,
             "lights": self.lights,
