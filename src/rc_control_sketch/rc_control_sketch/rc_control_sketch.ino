@@ -19,6 +19,7 @@ const int LIGHTS_PIN = 13;          // Servo signal
 const int ROTATING_LIGHTS_PIN = 14; // Servo signal
 const int SPEED_PIN = 15;           // Servo signal
 const int DIG_PIN = 16;             // Servo signal
+const int CAM_SERVO_PIN = 17;       // Servo signal (optional, not used here)
 
 // ====== PWM (ledc) ======
 const int THROTTLE_CH = 0;
@@ -29,6 +30,7 @@ const int LIGHTS_CH = 4;
 const int ROTATING_LIGHTS_CH = 5;
 const int SPEED_CH = 6;
 const int DIG_CH = 7;
+const int CAM_SERVO_CH = 8;
 const int PWM_FREQ = 50; // 50 Hz for RC signals
 const int PWM_RES = 16;  // 16-bit for fine steps
 // ledcWrite in "duty" steps, we’ll compute duty for a given microsecond pulse
@@ -58,6 +60,7 @@ volatile float lights_cmd = 0.0f;          // -1..1
 volatile float rotating_lights_cmd = 0.0f; // -1..1
 volatile float speed_cmd = 0.0f;           // -1..1
 volatile float dig_cmd = 0.0f;             // -1..1
+volatile float cam_cmd = 0.0f;             // -1..1
 
 unsigned long last_packet_ms = 0;
 const unsigned long FAILSAFE_MS = 500;
@@ -97,11 +100,11 @@ void sendNeutral()
   writePulseUS(THROTTLE_CH, us_mid_throttle);
   writePulseUS(STEER_CH, us_mid_steer);
   writePulseUS(WINCH_CH, us_mid_default);
-  writePulseUS(SWAYBAR_CH, us_mid_default);
-  writePulseUS(LIGHTS_CH, us_mid_default);
-  writePulseUS(ROTATING_LIGHTS_CH, us_mid_default);
-  writePulseUS(SPEED_CH, us_mid_default);
-  writePulseUS(DIG_CH, us_mid_default);
+  // writePulseUS(SWAYBAR_CH, us_mid_default);
+  // writePulseUS(LIGHTS_CH, us_mid_default);
+  // writePulseUS(ROTATING_LIGHTS_CH, us_mid_default);
+  // writePulseUS(SPEED_CH, us_mid_default);
+  // writePulseUS(DIG_CH, us_mid_default);
 }
 
 void applyControls()
@@ -127,6 +130,7 @@ void applyControls()
   float sw = constrain(swaybar_cmd, -1.0f, 1.0f);
   float sp = constrain(speed_cmd, -1.0f, 1.0f);
   float d = constrain(dig_cmd, -1.0f, 1.0f);
+  float cam = constrain(cam_cmd, -1.0f, 1.0f);
 
   if (fabsf(w) < 0.03f)
     w = 0.0f;
@@ -136,15 +140,17 @@ void applyControls()
     sp = 0.0f;
   if (fabsf(d) < 0.03f)
     d = 0.0f;
+  if (fabsf(cam) < 0.03f)
+    cam = 0.0f;
 
   int winch_us = mapFloatToUs(w, us_min_default, us_mid_default, us_max_default);
   int swaybar_us = mapFloatToUs(sw, us_min_default, us_mid_default, us_max_default);
   int speed_us = mapFloatToUs(sp, us_min_default, us_mid_default, us_max_default);
   int dig_us = mapFloatToUs(d, us_min_default, us_mid_default, us_max_default);
+  int cam_us = mapFloatToUs(cam, us_min_default, us_mid_default, us_max_default);
 
-  // Lights are 0..1 -> map to mid..max
-  int lights_us = us_mid_default + (int)((us_max_default - us_mid_default) * lights_cmd);
-  int rotating_lights_us = us_mid_default + (int)((us_max_default - us_mid_default) * rotating_lights_cmd);
+  int lights_us = mapFloatToUs(lights_cmd, us_mid_default, us_max_default, us_max_default);
+  int rotating_lights_us = mapFloatToUs(rotating_lights_cmd, us_mid_default, us_max_default, us_max_default);
 
   writePulseUS(WINCH_CH, winch_us);
   writePulseUS(SWAYBAR_CH, swaybar_us);
@@ -152,6 +158,7 @@ void applyControls()
   writePulseUS(DIG_CH, dig_us);
   writePulseUS(LIGHTS_CH, lights_us);
   writePulseUS(ROTATING_LIGHTS_CH, rotating_lights_us);
+  writePulseUS(CAM_SERVO_CH, cam_us);
 }
 
 void armSequence()
@@ -180,6 +187,7 @@ void setup()
   ledcSetup(ROTATING_LIGHTS_CH, PWM_FREQ, PWM_RES);
   ledcSetup(SPEED_CH, PWM_FREQ, PWM_RES);
   ledcSetup(DIG_CH, PWM_FREQ, PWM_RES);
+  ledcSetup(CAM_SERVO_CH, PWM_FREQ, PWM_RES);
   ledcAttachPin(THROTTLE_PIN, THROTTLE_CH);
   ledcAttachPin(STEER_PIN, STEER_CH);
   ledcAttachPin(WINCH_PIN, WINCH_CH);
@@ -188,6 +196,7 @@ void setup()
   ledcAttachPin(ROTATING_LIGHTS_PIN, ROTATING_LIGHTS_CH);
   ledcAttachPin(SPEED_PIN, SPEED_CH);
   ledcAttachPin(DIG_PIN, DIG_CH);
+  ledcAttachPin(CAM_SERVO_PIN, CAM_SERVO_CH);
 
   sendNeutral();
 
@@ -237,16 +246,17 @@ void loop()
         float rotating = doc["ch6"] | 0.0; // rotating lights 0..1
         float speed = doc["ch7"] | 0.0;    // speed -1..1
         float dig = doc["ch8"] | 0.0;      // dig -1..1
+        float cam = doc["ch9"] | 0.0;      // cam -1..1
 
         steer_cmd = constrain(steer, -1.0f, 1.0f);
         throttle_cmd = constrain(throttle, -1.0f, 1.0f);
         winch_cmd = constrain(winch, -1.0f, 1.0f);
         swaybar_cmd = constrain(swaybar, -1.0f, 1.0f);
-        // lights and rotating lights expected 0..1; clamp accordingly
-        lights_cmd = constrain(lights, 0.0f, 1.0f);
-        rotating_lights_cmd = constrain(rotating, 0.0f, 1.0f);
+        lights_cmd = constrain(lights, -1.0f, 1.0f);
+        rotating_lights_cmd = constrain(rotating, -1.0f, 1.0f);
         speed_cmd = constrain(speed, -1.0f, 1.0f);
         dig_cmd = constrain(dig, -1.0f, 1.0f);
+        cam_cmd = constrain(cam, -1.0f, 1.0f);
 
         last_packet_ms = millis();
       }

@@ -3,6 +3,8 @@ class CarControl:
         self.steering = 0.0
         self.throttle = 0.0
 
+        self.servo_cam = 0.0
+
         self.last_buttons = {}
 
     def update(self, ax, ay, lg, bx, by, rg, buttons):
@@ -10,6 +12,8 @@ class CarControl:
 
         self.steering = ax
         self.throttle = (rg - lg)/2  # example: right trigger - left trigger
+
+        self.servo_cam = bx
 
 
 class RGT_control(CarControl):
@@ -56,7 +60,8 @@ class RGT_control(CarControl):
             "rotating_lights": self.rotating_lights,
             "speed": self.speed,
             "dig": self.dig *0.7,
-            "swaybar": self.swaybar
+            "swaybar": self.swaybar,
+            "servo_cam": self.servo_cam
         }
 
 

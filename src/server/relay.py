@@ -93,9 +93,9 @@ async def handle_client(ws):
                     return max(lo, min(hi, fv))
 
                 # If client sends channel-format data, forward those channels.
-                if any(k in pkt for k in ("ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8")):
+                if any(k in pkt for k in ("ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8", "ch9")):
                     out = {}
-                    for i in range(1, 9):
+                    for i in range(1, 10):
                         key = f"ch{i}"
                         if key in pkt:
                             out[key] = clamp(pkt.get(key, 0.0))

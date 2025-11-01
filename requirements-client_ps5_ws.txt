@@ -1,0 +1,13 @@
+# Minimal requirements to run only the client at src/client/client_ps5_ws.py
+# This is a slim subset of the repo's full requirements.
+# Install with: python -m pip install -r requirements-client_ps5_ws.txt
+
+# Runtime packages
+pygame==2.6.1
+websockets==12.0
+
+# Notes:
+# - This client uses the local module src/client/car_control.py (no extra packages).
+# - These are the Python wrapper packages. The system must have appropriate
+#   drivers for your joystick/gamepad (OS-specific).
+# - No system-level native libraries are required for this client alone.

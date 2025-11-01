@@ -57,6 +57,7 @@ def read_state():
             "ch6": round(max(-1,min(1,calibrated_controls["rotating_lights"])),3),
             "ch7": round(max(-1,min(1,calibrated_controls["speed"])),3),
             "ch8": round(max(-1,min(1,calibrated_controls["dig"])),3),
+            "ch9": round(max(-1,min(1,calibrated_controls["servo_cam"])),3),
             "ts": time.time(),
             "token": TOKEN}
 
